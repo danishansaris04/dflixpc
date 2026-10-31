@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>D-FLIX Player</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-user-select:none;user-select:none}
+  html,body{width:100%;height:100%;background:#000;overflow:hidden;font-family:"Segoe UI",Arial,sans-serif;color:#fff}
+  #stage{position:fixed;inset:0;background:#000}
+  video{width:100%;height:100%;object-fit:contain;background:#000;outline:none}
+  video::cue{background:rgba(0,0,0,.7);color:#fff;font-size:1.5em}
+  .hide-cursor{cursor:none}
+  #top,#bar{position:fixed;left:0;right:0;z-index:5;transition:opacity .25s;padding:14px 20px}
+  #top{top:0;background:linear-gradient(#000c,#0000);display:flex;align-items:center;gap:14px}
+  #bar{bottom:0;background:linear-gradient(#0000,#000d);padding-top:40px}
+  .hidden-ui #top,.hidden-ui #bar{opacity:0;pointer-events:none}
+  #title{flex:1;font-size:18px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  button{background:none;border:0;color:#fff;font-size:15px;cursor:pointer;padding:6px 10px;border-radius:8px}
+  button:hover{background:rgba(255,255,255,.15)}
+  button.on{color:#00e5ff}
+  #seekrow{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  #seek{flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.25);position:relative;cursor:pointer}
+  #seek:hover{height:9px}
+  #buf,#prog{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+  #buf{background:rgba(255,255,255,.35)}#prog{background:#00e5ff}
+  #knob{position:absolute;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:#00e5ff;left:0}
+  .t{font-size:13px;min-width:56px;text-align:center;color:#ddd}
+  #ctl{display:flex;align-items:center;gap:4px}
+  #vol{width:90px;accent-color:#00e5ff}
+  .sp{flex:1}
+  #center{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:4;font-size:46px;background:rgba(0,0,0,.55);border-radius:50%;width:96px;height:96px;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s}
+  #center.show{opacity:1}
+  #spin{position:fixed;left:50%;top:50%;margin:-28px 0 0 -28px;width:56px;height:56px;border:5px solid rgba(255,255,255,.2);border-top-color:#00e5ff;border-radius:50%;animation:sp 1s linear infinite;z-index:4;display:none}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  #err{position:fixed;inset:0;z-index:8;background:#000d;display:none;align-items:center;justify-content:center;text-align:center;padding:30px}
+  #err .box{max-width:460px}#err h2{margin-bottom:10px}#err p{color:#aaa;line-height:1.6;margin-bottom:16px;font-size:14px}
+  #err button{background:#00e5ff;color:#001318;font-weight:700;padding:10px 18px;margin:4px}
+  .menu{position:absolute;bottom:64px;background:#14141c;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:6px;display:none;min-width:170px;max-height:50vh;overflow:auto}
+  .menu div{padding:8px 12px;border-radius:6px;cursor:pointer;font-size:14px}.menu div:hover{background:rgba(255,255,255,.12)}.menu .cur{color:#00e5ff}
+  .rel{position:relative}
+  #mQ,#mCc,#mSp{right:0}
+  .menu .sep{height:1px;padding:0;margin:6px 4px;background:rgba(255,255,255,.12);cursor:default}.menu .sep:hover{background:rgba(255,255,255,.12)}
+  .menu .dim{color:#888;cursor:default}.menu .dim:hover{background:none}
+  .menu .vlc{color:#ffb74d}
+  #osd{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:6;background:rgba(0,0,0,.75);padding:8px 16px;border-radius:10px;font-size:15px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:80%;text-align:center}
+  #osd.on{opacity:1}
+</style>
+</head>
+<body>
+<div id="stage"><video id="v" autoplay></video></div>
+<div id="osd"></div><div id="spin"></div><div id="center">&#9654;</div>
+<div id="top"><button id="bBack" title="Close (Esc)">&#8592; Back</button><div id="title"></div></div>
+<div id="bar">
+  <div id="seekrow"><span class="t" id="tc">0:00</span>
+    <div id="seek"><div id="buf"></div><div id="prog"></div><div id="knob"></div></div>
+    <span class="t" id="td">0:00</span></div>
+  <div id="ctl">
+    <button id="bPrev" title="Previous (P)">&#9198;</button>
+    <button id="bPlay" title="Play/Pause (Space)">&#9208;</button>
+    <button id="bNext" title="Next (N)">&#9197;</button>
+    <button id="bBk" title="-10s (Left)">&#8634; 10</button>
+    <button id="bFw" title="+10s (Right)">10 &#8635;</button>
+    <button id="bMute" title="Mute (M)">&#128266;</button>
+    <input type="range" id="vol" min="0" max="1" step="0.05" value="1">
+    <span class="sp"></span>
+    <span class="rel"><button id="bEp" title="Episodes">&#9776; Episodes</button><div class="menu" id="mEp"></div></span>
+    <span class="rel"><button id="bAu" title="Audio track (T)" style="display:none">&#9835; Audio</button><div class="menu" id="mAu"></div></span>
+    <span class="rel"><button id="bCc" title="Subtitles (C)">CC</button><div class="menu" id="mCc"></div></span>
+    <span class="rel"><button id="bSp" title="Speed ([ ])">1x</button><div class="menu" id="mSp"></div></span>
+    <span class="rel"><button id="bQ" title="Quality (Q) / Open in VLC (V)">&#9881; Quality</button><div class="menu" id="mQ"></div></span>
+    <button id="bAr" title="Fit / Fill (A)">&#9645;</button>
+    <button id="bFs" title="Fullscreen (F / F11)">&#9974;</button>
+  </div>
+</div>
+<div id="err"><div class="box"><h2>Can't play this video here</h2><p id="errMsg"></p>
+  <button id="bRetry">Retry</button><button id="bMpv" style="display:none">Play with mpv</button><button id="bVlc">Open in VLC</button><button id="bClose">Close</button></div></div>
+<input type="file" id="subFile" accept=".srt,.vtt" style="display:none">
+
+<script>
+(function () {
+  var $ = function (i) { return document.getElementById(i); };
+  var v = $("v"), info = {}, curUrl = "", saveT = 0, uiT = 0, speeds = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2], fit = true, resumed = false;
+
+  function fmt(s) { if (!isFinite(s)) return "0:00"; s = Math.floor(s); var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+    return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (x < 10 ? "0" : "") + x; }
+  function flash(sym) { var c = $("center"); c.textContent = sym; c.classList.add("show"); setTimeout(function () { c.classList.remove("show"); }, 380); }
+  function osd(m) { var o = $("osd"); o.textContent = m; o.className = "on"; clearTimeout(osd.t); osd.t = setTimeout(function () { o.className = ""; }, 2600); }
+  function cmd(a, b) { try { dp.send("cmd", a, b); } catch (e) {} }
+
+  // ---- main process se aane wale events ----
+  dp.onLoad(function (o) {
+    resumed = false; curUrl = o.url;
+    $("err").style.display = "none"; $("spin").style.display = "block";
+    clearSubs(); $("bAu").style.display = "none";
+    if (o.title) { $("title").textContent = o.title; document.title = o.title + " - D-FLIX"; }
+    v.__resume = o.start > 3000 ? o.start / 1000 : 0;
+    v.src = o.url; v.load();
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+  });
+  dp.onOsd(osd);
+  dp.onInfo(function (i) {
+    info = i || {};
+    if (info.title) { $("title").textContent = info.title; document.title = info.title + " - D-FLIX"; }
+    var multi = info.episodes && info.episodes.length > 1;
+    $("bPrev").style.display = $("bNext").style.display = $("bEp").style.display = multi ? "" : "none";
+    $("bPrev").style.opacity = info.hasPrev ? 1 : .45; $("bNext").style.opacity = info.hasNext ? 1 : .45;
+    $("bQ").innerHTML = "&#9881; " + (info.quality || "Quality");
+    $("bMpv").style.display = info.hasMpv ? "" : "none";
+    buildEp(); buildQ();
+  });
+  dp.onSub(function (o) {
+    subs.push({ url: o.url, name: o.label });
+    if (subs.length === 1 && !trackEl) loadSub(subs[0]);     // pehli subtitle auto on
+  });
+
+  v.addEventListener("loadedmetadata", function () {
+    initAudio();
+    $("td").textContent = fmt(v.duration);
+    if (v.__resume && !resumed) { v.currentTime = v.__resume; resumed = true; }
+  });
+  v.addEventListener("waiting", function () { $("spin").style.display = "block"; });
+  v.addEventListener("playing", function () { $("spin").style.display = "none"; $("bPlay").innerHTML = "&#9208;"; });
+  v.addEventListener("canplay", function () { $("spin").style.display = "none"; });
+  v.addEventListener("pause", function () { $("bPlay").innerHTML = "&#9654;"; });
+  v.addEventListener("timeupdate", function () {
+    var d = v.duration || 0, t = v.currentTime || 0, pct = d ? t / d * 100 : 0;
+    $("prog").style.width = pct + "%"; $("knob").style.left = pct + "%"; $("tc").textContent = fmt(t);
+    try { if (v.buffered.length && d) $("buf").style.width = (v.buffered.end(v.buffered.length - 1) / d * 100) + "%"; } catch (e) {}
+  });
+  // position main process ko har 1 sec (wahi history/resume save karta hai)
+  setInterval(function () { if (!v.paused && isFinite(v.duration) && v.duration > 0) { try { dp.send("tick", Math.round(v.currentTime * 1000), Math.round(v.duration * 1000)); } catch (e) {} } }, 1000);
+  v.addEventListener("ended", function () { $("bPlay").innerHTML = "&#9654;"; try { dp.send("ended"); } catch (e) {} showUI(true); });
+  v.addEventListener("error", function () {
+    $("spin").style.display = "none";
+    var c = v.error ? v.error.code : 0;
+    $("errMsg").textContent = c === 4
+      ? "This file's video/audio format (for example H.265/HEVC or AC3/DTS audio) isn't supported by the built-in player. Try \"Open in VLC\"" + (info.hasMpv ? " or \"Play with mpv\"." : ".")
+      : "Playback failed (network or access problem). Check your internet and try again.";
+    $("err").style.display = "flex";
+  });
+
+  // ---- controls ----
+  function toggle() { if (v.paused) v.play(); else v.pause(); flash(v.paused ? "\u275A\u275A" : "\u25B6"); }
+  function seekBy(s) { v.currentTime = Math.max(0, Math.min((v.duration || 1e9), v.currentTime + s)); flash(s > 0 ? "\u00BB" : "\u00AB"); }
+  function setVol(x) { v.volume = Math.max(0, Math.min(1, x)); v.muted = v.volume === 0; $("vol").value = v.volume; muteIcon(); }
+  function muteIcon() { $("bMute").innerHTML = (v.muted || v.volume === 0) ? "&#128263;" : "&#128266;"; }
+  function next() { if (info.hasNext) cmd("next"); }
+  function prev() { if (v.currentTime > 5 || !info.hasPrev) v.currentTime = 0; else cmd("prev"); }
+  function fullscreen() { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(function () {}); }
+  function closePlayer() { try { dp.send("close"); } catch (e) {} }
+  function openVlc() { closeMenus(); cmd("vlc"); }
+  $("bPlay").onclick = toggle; $("bNext").onclick = next; $("bPrev").onclick = prev;
+  $("bBk").onclick = function () { seekBy(-10); }; $("bFw").onclick = function () { seekBy(10); };
+  $("bMute").onclick = function () { v.muted = !v.muted; muteIcon(); };
+  $("vol").oninput = function () { setVol(parseFloat(this.value)); };
+  $("bFs").onclick = fullscreen;
+  $("bBack").onclick = $("bClose").onclick = closePlayer;
+  $("bRetry").onclick = function () { var t = v.currentTime; $("err").style.display = "none"; $("spin").style.display = "block"; resumed = false; v.__resume = t; v.src = curUrl; v.load(); var p = v.play(); if (p && p.catch) p.catch(function () {}); };
+  $("bMpv").onclick = function () { cmd("mpv"); };
+  $("bVlc").onclick = openVlc;
+  $("bAr").onclick = function () { fit = !fit; v.style.objectFit = fit ? "contain" : "cover"; this.classList.toggle("on", !fit); };
+  v.addEventListener("click", toggle);
+  v.addEventListener("dblclick", fullscreen);
+  var seek = $("seek");
+  function seekTo(e) { var r = seek.getBoundingClientRect(); v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (v.duration || 0); }
+  var dragging = false;
+  seek.addEventListener("mousedown", function (e) { dragging = true; seekTo(e); });
+  window.addEventListener("mousemove", function (e) { if (dragging) seekTo(e); showUI(); });
+  window.addEventListener("mouseup", function () { dragging = false; });
+
+  // menus
+  function closeMenus() { ["mEp", "mCc", "mSp", "mAu", "mQ"].forEach(function (i) { $(i).style.display = "none"; }); }
+  function openMenu(id) { var m = $(id), was = m.style.display === "block"; closeMenus(); if (!was) m.style.display = "block"; }
+  $("bEp").onclick = function (e) { e.stopPropagation(); buildEp(); openMenu("mEp"); };
+  $("bCc").onclick = function (e) { e.stopPropagation(); buildCc(); openMenu("mCc"); };
+  $("bSp").onclick = function (e) { e.stopPropagation(); openMenu("mSp"); };
+  $("bQ").onclick = function (e) { e.stopPropagation(); buildQ(); openMenu("mQ"); };
+  document.addEventListener("click", closeMenus);
+
+  function buildEp() {
+    var m = $("mEp"); m.innerHTML = "";
+    (info.episodes || []).forEach(function (name, i) { var d = document.createElement("div"); d.textContent = name; if (i === info.index) d.className = "cur";
+      d.onclick = function () { cmd("episode", i); }; m.appendChild(d); });
+  }
+  // Quality menu: upar saari qualities, sabse neeche "Open in VLC"
+  function buildQ() {
+    var m = $("mQ"); m.innerHTML = "";
+    var vs = info.variants || [];
+    if (vs.length > 1) {
+      vs.forEach(function (x) { var d = document.createElement("div"); var lb = x.label || (x.h + "p");
+        var on = lb === info.quality; d.textContent = (on ? "\u2713 " : "") + lb; if (on) d.className = "cur";
+        d.onclick = function () { if (!on) cmd("quality", x.h); }; m.appendChild(d); });
+    } else {
+      var d = document.createElement("div"); d.className = "dim"; d.textContent = "Original quality" + (info.quality ? " (" + info.quality + ")" : ""); m.appendChild(d);
+    }
+    var s = document.createElement("div"); s.className = "sep"; m.appendChild(s);
+    var o = document.createElement("div"); o.className = "vlc"; o.textContent = "\u25B6 Open in VLC"; o.onclick = openVlc; m.appendChild(o);
+  }
+  function buildSp() {
+    var m = $("mSp"); m.innerHTML = "";
+    speeds.forEach(function (s) { var d = document.createElement("div"); d.textContent = s + "x"; if (v.playbackRate === s) d.className = "cur";
+      d.onclick = function () { v.playbackRate = s; $("bSp").textContent = s + "x"; buildSp(); }; m.appendChild(d); });
+  }
+  buildSp();
+  function setSpeed(dir) { var i = speeds.indexOf(v.playbackRate); if (i < 0) i = 2; i = Math.max(0, Math.min(speeds.length - 1, i + dir)); v.playbackRate = speeds[i]; $("bSp").textContent = speeds[i] + "x"; buildSp(); flash(speeds[i] + "x"); }
+
+  // ---- audio tracks (dual / multi-audio files) ----
+  var prefLang = null;
+  var LANG = { hin: "Hindi", hi: "Hindi", eng: "English", en: "English", tam: "Tamil", ta: "Tamil", tel: "Telugu", te: "Telugu", mal: "Malayalam", ml: "Malayalam", kan: "Kannada", kn: "Kannada", ben: "Bengali", bn: "Bengali", urd: "Urdu", ur: "Urdu", pan: "Punjabi", mar: "Marathi", jpn: "Japanese", ja: "Japanese", kor: "Korean", ko: "Korean", spa: "Spanish", fre: "French", fra: "French", ger: "German", deu: "German", chi: "Chinese", zho: "Chinese", und: "" };
+  function audioList() { var a = v.audioTracks, out = []; if (a) for (var i = 0; i < a.length; i++) out.push(a[i]); return out; }
+  function trackName(t, i) {
+    var lg = LANG[(t.language || "").toLowerCase()]; if (lg === undefined) lg = t.language || "";
+    var lb = t.label || "", base = (lb && lg && lb.toLowerCase().indexOf(lg.toLowerCase()) < 0) ? lg + " - " + lb : (lb || lg || "Track " + (i + 1));
+    return (i + 1) + ". " + base;
+  }
+  function curAudio() { var a = audioList(); for (var i = 0; i < a.length; i++) if (a[i].enabled) return i; return 0; }
+  function setAudio(i, quiet) {
+    var a = audioList(); if (!a[i]) return;
+    a[i].enabled = true;
+    a.forEach(function (t, k) { if (k !== i) t.enabled = false; });
+    prefLang = a[i].language || null;
+    buildAu(); if (!quiet) flash("\u266A");
+  }
+  function buildAu() {
+    var m = $("mAu"); m.innerHTML = ""; var c = curAudio();
+    audioList().forEach(function (t, i) { var d = document.createElement("div"); d.textContent = trackName(t, i); if (i === c) d.className = "cur";
+      d.onclick = function () { setAudio(i); }; m.appendChild(d); });
+  }
+  function initAudio() {
+    var a = audioList(); $("bAu").style.display = a.length > 1 ? "" : "none";
+    if (a.length < 2) return;
+    if (prefLang) for (var i = 0; i < a.length; i++) if ((a[i].language || "") === prefLang) { setAudio(i, true); return; }
+    buildAu();
+  }
+  $("bAu").onclick = function (e) { e.stopPropagation(); buildAu(); openMenu("mAu"); };
+  try { if (v.audioTracks && v.audioTracks.addEventListener) v.audioTracks.addEventListener("addtrack", initAudio); } catch (e) {}
+
+  // ---- subtitles (.srt / .vtt) ----
+  var subs = [], trackEl = null;
+  function clearSubs() { subs = []; if (trackEl) { trackEl.remove(); trackEl = null; } $("bCc").classList.remove("on"); }
+  function srtToVtt(t) { t = t.replace(/^\uFEFF/, "").replace(/\r+/g, ""); if (/^WEBVTT/.test(t)) return t;
+    return "WEBVTT\n\n" + t.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2"); }
+  function applySub(text) {
+    if (trackEl) trackEl.remove();
+    var url = URL.createObjectURL(new Blob([srtToVtt(text)], { type: "text/vtt" }));
+    trackEl = document.createElement("track"); trackEl.kind = "subtitles"; trackEl.src = url; trackEl.default = true;
+    v.appendChild(trackEl);
+    setTimeout(function () { if (v.textTracks[0]) v.textTracks[0].mode = "showing"; }, 100);
+    $("bCc").classList.add("on");
+  }
+  function loadSub(s) { fetch(s.url).then(function (r) { return r.text(); }).then(applySub).catch(function () { osd("Subtitle load nahi hui"); }); }
+  function buildCc() {
+    var m = $("mCc"); m.innerHTML = "";
+    var off = document.createElement("div"); off.textContent = "Off"; off.onclick = function () { clearSubsKeep(); }; m.appendChild(off);
+    subs.forEach(function (s) { var d = document.createElement("div"); d.textContent = s.name; d.onclick = function () { loadSub(s); }; m.appendChild(d); });
+    var f = document.createElement("div"); f.textContent = "Load from PC..."; f.onclick = function () { $("subFile").click(); }; m.appendChild(f);
+  }
+  function clearSubsKeep() { if (trackEl) { trackEl.remove(); trackEl = null; } $("bCc").classList.remove("on"); }
+  $("subFile").onchange = function () { var f = this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function () { applySub(String(r.result)); }; r.readAsText(f); this.value = ""; };
+
+  // ---- UI auto-hide + keys ----
+  function showUI(keep) { document.body.classList.remove("hidden-ui", "hide-cursor"); clearTimeout(uiT);
+    if (!keep) uiT = setTimeout(function () { if (!v.paused) { document.body.classList.add("hidden-ui", "hide-cursor"); closeMenus(); } }, 3000); }
+  document.addEventListener("mousemove", function () { showUI(); });
+  document.addEventListener("keydown", function (e) {
+    showUI();
+    switch (e.key) {
+      case " ": case "k": case "K": e.preventDefault(); toggle(); break;
+      case "ArrowRight": seekBy(e.shiftKey ? 30 : 10); break;
+      case "ArrowLeft": seekBy(e.shiftKey ? -30 : -10); break;
+      case "ArrowUp": e.preventDefault(); setVol(v.volume + 0.05); break;
+      case "ArrowDown": e.preventDefault(); setVol(v.volume - 0.05); break;
+      case "m": case "M": v.muted = !v.muted; muteIcon(); break;
+      case "f": case "F": case "F11": e.preventDefault(); fullscreen(); break;
+      case "n": case "N": next(); break;
+      case "p": case "P": prev(); break;
+      case "]": setSpeed(1); break;
+      case "[": setSpeed(-1); break;
+      case "a": case "A": $("bAr").click(); break;
+      case "c": case "C": $("bCc").click(); break;
+      case "q": case "Q": if (info.variants && info.variants.length > 1) cmd("quality"); else osd("Is video ki sirf ek quality hai"); break;
+      case "v": case "V": openVlc(); break;
+      case "t": case "T": var n = audioList().length; if (n > 1) setAudio((curAudio() + 1) % n); break;
+      case "Escape": if (!document.fullscreenElement) closePlayer(); break;
+    }
+  });
+  showUI();
+})();
+</script>
+</body>
+</html>

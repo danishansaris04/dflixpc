@@ -1,0 +1,18 @@
+{
+  "name": "dflix-pc",
+  "productName": "D-FLIX",
+  "version": "4.2.0",
+  "description": "D-FLIX for PC - Google Drive movie/series player (Windows 7/8/8.1/10/11)",
+  "main": "boot.js",
+  "author": "Danish",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/run.js && node test/session.js && node test/main-smoke.js && node test/updater.js"
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "rcedit": "^1.1.1"
+  }
+}
