@@ -9,7 +9,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node test/run.js && node test/session.js && node test/main-smoke.js && node test/updater.js"
+    "test": "node test/run.js && node test/session.js && node test/main-smoke.js && node test/updater.js && node test/streamcache.js"
   },
   "devDependencies": {
     "electron": "22.3.27",

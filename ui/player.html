@@ -38,11 +38,17 @@
   .menu{position:absolute;bottom:64px;background:#14141c;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:6px;display:none;min-width:170px;max-height:50vh;overflow:auto}
   .menu div{padding:8px 12px;border-radius:6px;cursor:pointer;font-size:14px}.menu div:hover{background:rgba(255,255,255,.12)}.menu .cur{color:#00e5ff}
   .rel{position:relative}
+  #mQ,#mCc,#mSp{right:0}
+  .menu .sep{height:1px;padding:0;margin:6px 4px;background:rgba(255,255,255,.12);cursor:default}.menu .sep:hover{background:rgba(255,255,255,.12)}
+  .menu .dim{color:#888;cursor:default}.menu .dim:hover{background:none}
+  .menu .vlc{color:#ffb74d}
+  #osd{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:6;background:rgba(0,0,0,.75);padding:8px 16px;border-radius:10px;font-size:15px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:80%;text-align:center}
+  #osd.on{opacity:1}
 </style>
 </head>
 <body>
 <div id="stage"><video id="v" autoplay></video></div>
-<div id="spin"></div><div id="center">&#9654;</div>
+<div id="osd"></div><div id="spin"></div><div id="center">&#9654;</div>
 <div id="top"><button id="bBack" title="Close (Esc)">&#8592; Back</button><div id="title"></div></div>
 <div id="bar">
   <div id="seekrow"><span class="t" id="tc">0:00</span>
@@ -61,52 +67,51 @@
     <span class="rel"><button id="bAu" title="Audio track (T)" style="display:none">&#9835; Audio</button><div class="menu" id="mAu"></div></span>
     <span class="rel"><button id="bCc" title="Subtitles (C)">CC</button><div class="menu" id="mCc"></div></span>
     <span class="rel"><button id="bSp" title="Speed ([ ])">1x</button><div class="menu" id="mSp"></div></span>
+    <span class="rel"><button id="bQ" title="Quality (Q) / Open in VLC (V)">&#9881; Quality</button><div class="menu" id="mQ"></div></span>
     <button id="bAr" title="Fit / Fill (A)">&#9645;</button>
     <button id="bFs" title="Fullscreen (F / F11)">&#9974;</button>
   </div>
 </div>
 <div id="err"><div class="box"><h2>Can't play this video here</h2><p id="errMsg"></p>
-  <button id="bRetry">Retry</button><button id="bMpv">Play with mpv</button><button id="bClose">Close</button></div></div>
+  <button id="bRetry">Retry</button><button id="bMpv" style="display:none">Play with mpv</button><button id="bVlc">Open in VLC</button><button id="bClose">Close</button></div></div>
 <input type="file" id="subFile" accept=".srt,.vtt" style="display:none">
 
 <script>
 (function () {
   var $ = function (i) { return document.getElementById(i); };
-  var v = $("v"), init = {};
-  try { init = JSON.parse(Android.getPlayerInit() || "{}"); } catch (e) {}
-  var meta = init.meta || null;
-  var list = (meta && meta.playlist && meta.playlist.length) ? meta.playlist : [{ id: init.id, name: init.name }];
-  var idx = (meta && typeof meta.pindex === "number" && list[meta.pindex]) ? meta.pindex : 0;
-  var cur = list[idx] || { id: init.id, name: init.name };
-  var saveT = 0, uiT = 0, speeds = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2], fit = true, resumed = false;
+  var v = $("v"), info = {}, curUrl = "", saveT = 0, uiT = 0, speeds = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2], fit = true, resumed = false;
 
   function fmt(s) { if (!isFinite(s)) return "0:00"; s = Math.floor(s); var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
     return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (x < 10 ? "0" : "") + x; }
-  function srcFor(it) { return (init.local ? "/local/" : "/stream/") + encodeURIComponent(it.id) + "?n=" + encodeURIComponent(it.name || ""); }
   function flash(sym) { var c = $("center"); c.textContent = sym; c.classList.add("show"); setTimeout(function () { c.classList.remove("show"); }, 380); }
+  function osd(m) { var o = $("osd"); o.textContent = m; o.className = "on"; clearTimeout(osd.t); osd.t = setTimeout(function () { o.className = ""; }, 2600); }
+  function cmd(a, b) { try { dp.send("cmd", a, b); } catch (e) {} }
 
-  function state(id) { try { return JSON.parse(Android.getPlayState(id) || "{}"); } catch (e) { return {}; } }
-  function save(done) {
-    if (!cur || !cur.id || !isFinite(v.duration) || v.duration <= 0) return;
-    var pos = v.currentTime * 1000, dur = v.duration * 1000;
-    Android.playerSaveState(cur.id, done ? 0 : pos, dur, !!done || pos > dur * 0.95);
-  }
-
-  function load(i, startAtSaved) {
-    save(false);
-    idx = i; cur = list[i]; resumed = false;
-    document.title = cur.name || "D-FLIX"; $("title").textContent = cur.name || "";
+  // ---- main process se aane wale events ----
+  dp.onLoad(function (o) {
+    resumed = false; curUrl = o.url;
     $("err").style.display = "none"; $("spin").style.display = "block";
     clearSubs(); $("bAu").style.display = "none";
-    v.src = srcFor(cur); v.load();
-    if (meta && meta.hkey) Android.playerHistory(JSON.stringify(meta), cur.id, cur.name);
-    var st = state(cur.id);
-    v.__resume = (startAtSaved !== false && st.pos > 5000 && !st.done && st.dur && st.pos < st.dur - 20000) ? st.pos / 1000 : 0;
+    if (o.title) { $("title").textContent = o.title; document.title = o.title + " - D-FLIX"; }
+    v.__resume = o.start > 3000 ? o.start / 1000 : 0;
+    v.src = o.url; v.load();
     var p = v.play(); if (p && p.catch) p.catch(function () {});
-    $("bPrev").style.display = $("bNext").style.display = $("bEp").style.display = list.length > 1 ? "" : "none";
-    if (!init.local) findSubs();
-    buildEp();
-  }
+  });
+  dp.onOsd(osd);
+  dp.onInfo(function (i) {
+    info = i || {};
+    if (info.title) { $("title").textContent = info.title; document.title = info.title + " - D-FLIX"; }
+    var multi = info.episodes && info.episodes.length > 1;
+    $("bPrev").style.display = $("bNext").style.display = $("bEp").style.display = multi ? "" : "none";
+    $("bPrev").style.opacity = info.hasPrev ? 1 : .45; $("bNext").style.opacity = info.hasNext ? 1 : .45;
+    $("bQ").innerHTML = "&#9881; " + (info.quality || "Quality");
+    $("bMpv").style.display = info.hasMpv ? "" : "none";
+    buildEp(); buildQ();
+  });
+  dp.onSub(function (o) {
+    subs.push({ url: o.url, name: o.label });
+    if (subs.length === 1 && !trackEl) loadSub(subs[0]);     // pehli subtitle auto on
+  });
 
   v.addEventListener("loadedmetadata", function () {
     initAudio();
@@ -120,18 +125,16 @@
   v.addEventListener("timeupdate", function () {
     var d = v.duration || 0, t = v.currentTime || 0, pct = d ? t / d * 100 : 0;
     $("prog").style.width = pct + "%"; $("knob").style.left = pct + "%"; $("tc").textContent = fmt(t);
-    try { if (v.buffered.length) $("buf").style.width = (v.buffered.end(v.buffered.length - 1) / d * 100) + "%"; } catch (e) {}
-    if (Date.now() - saveT > 5000) { saveT = Date.now(); save(false); }
+    try { if (v.buffered.length && d) $("buf").style.width = (v.buffered.end(v.buffered.length - 1) / d * 100) + "%"; } catch (e) {}
   });
-  v.addEventListener("ended", function () {
-    save(true);
-    if (idx < list.length - 1) load(idx + 1, false); else { $("bPlay").innerHTML = "&#9654;"; showUI(true); }
-  });
+  // position main process ko har 1 sec (wahi history/resume save karta hai)
+  setInterval(function () { if (!v.paused && isFinite(v.duration) && v.duration > 0) { try { dp.send("tick", Math.round(v.currentTime * 1000), Math.round(v.duration * 1000)); } catch (e) {} } }, 1000);
+  v.addEventListener("ended", function () { $("bPlay").innerHTML = "&#9654;"; try { dp.send("ended"); } catch (e) {} showUI(true); });
   v.addEventListener("error", function () {
     $("spin").style.display = "none";
     var c = v.error ? v.error.code : 0;
     $("errMsg").textContent = c === 4
-      ? "This file's video/audio format (for example H.265/HEVC or AC3/DTS audio) isn't supported by the built-in player. If you placed mpv.exe in the \"mpv\" folder next to DFlix.exe, use the button below."
+      ? "This file's video/audio format (for example H.265/HEVC or AC3/DTS audio) isn't supported by the built-in player. Try \"Open in VLC\"" + (info.hasMpv ? " or \"Play with mpv\"." : ".")
       : "Playback failed (network or access problem). Check your internet and try again.";
     $("err").style.display = "flex";
   });
@@ -141,19 +144,23 @@
   function seekBy(s) { v.currentTime = Math.max(0, Math.min((v.duration || 1e9), v.currentTime + s)); flash(s > 0 ? "\u00BB" : "\u00AB"); }
   function setVol(x) { v.volume = Math.max(0, Math.min(1, x)); v.muted = v.volume === 0; $("vol").value = v.volume; muteIcon(); }
   function muteIcon() { $("bMute").innerHTML = (v.muted || v.volume === 0) ? "&#128263;" : "&#128266;"; }
-  function next() { if (idx < list.length - 1) load(idx + 1, false); }
-  function prev() { if (v.currentTime > 5 || idx === 0) v.currentTime = 0; else load(idx - 1, false); }
+  function next() { if (info.hasNext) cmd("next"); }
+  function prev() { if (v.currentTime > 5 || !info.hasPrev) v.currentTime = 0; else cmd("prev"); }
+  function fullscreen() { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(function () {}); }
+  function closePlayer() { try { dp.send("close"); } catch (e) {} }
+  function openVlc() { closeMenus(); cmd("vlc"); }
   $("bPlay").onclick = toggle; $("bNext").onclick = next; $("bPrev").onclick = prev;
   $("bBk").onclick = function () { seekBy(-10); }; $("bFw").onclick = function () { seekBy(10); };
   $("bMute").onclick = function () { v.muted = !v.muted; muteIcon(); };
   $("vol").oninput = function () { setVol(parseFloat(this.value)); };
-  $("bFs").onclick = function () { Android.playerFullscreen(); };
-  $("bBack").onclick = $("bClose").onclick = function () { save(false); Android.playerClose(); };
-  $("bRetry").onclick = function () { var t = v.currentTime; load(idx, true); };
-  $("bMpv").onclick = function () { Android.playerMpv(srcFor(cur), cur.name); };
+  $("bFs").onclick = fullscreen;
+  $("bBack").onclick = $("bClose").onclick = closePlayer;
+  $("bRetry").onclick = function () { var t = v.currentTime; $("err").style.display = "none"; $("spin").style.display = "block"; resumed = false; v.__resume = t; v.src = curUrl; v.load(); var p = v.play(); if (p && p.catch) p.catch(function () {}); };
+  $("bMpv").onclick = function () { cmd("mpv"); };
+  $("bVlc").onclick = openVlc;
   $("bAr").onclick = function () { fit = !fit; v.style.objectFit = fit ? "contain" : "cover"; this.classList.toggle("on", !fit); };
   v.addEventListener("click", toggle);
-  v.addEventListener("dblclick", function () { Android.playerFullscreen(); });
+  v.addEventListener("dblclick", fullscreen);
   var seek = $("seek");
   function seekTo(e) { var r = seek.getBoundingClientRect(); v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (v.duration || 0); }
   var dragging = false;
@@ -162,16 +169,32 @@
   window.addEventListener("mouseup", function () { dragging = false; });
 
   // menus
-  function closeMenus() { ["mEp", "mCc", "mSp", "mAu"].forEach(function (i) { $(i).style.display = "none"; }); }
+  function closeMenus() { ["mEp", "mCc", "mSp", "mAu", "mQ"].forEach(function (i) { $(i).style.display = "none"; }); }
   function openMenu(id) { var m = $(id), was = m.style.display === "block"; closeMenus(); if (!was) m.style.display = "block"; }
-  $("bEp").onclick = function (e) { e.stopPropagation(); openMenu("mEp"); };
+  $("bEp").onclick = function (e) { e.stopPropagation(); buildEp(); openMenu("mEp"); };
   $("bCc").onclick = function (e) { e.stopPropagation(); buildCc(); openMenu("mCc"); };
   $("bSp").onclick = function (e) { e.stopPropagation(); openMenu("mSp"); };
+  $("bQ").onclick = function (e) { e.stopPropagation(); buildQ(); openMenu("mQ"); };
   document.addEventListener("click", closeMenus);
+
   function buildEp() {
     var m = $("mEp"); m.innerHTML = "";
-    list.forEach(function (it, i) { var d = document.createElement("div"); d.textContent = it.name; if (i === idx) d.className = "cur";
-      d.onclick = function () { load(i, true); }; m.appendChild(d); });
+    (info.episodes || []).forEach(function (name, i) { var d = document.createElement("div"); d.textContent = name; if (i === info.index) d.className = "cur";
+      d.onclick = function () { cmd("episode", i); }; m.appendChild(d); });
+  }
+  // Quality menu: upar saari qualities, sabse neeche "Open in VLC"
+  function buildQ() {
+    var m = $("mQ"); m.innerHTML = "";
+    var vs = info.variants || [];
+    if (vs.length > 1) {
+      vs.forEach(function (x) { var d = document.createElement("div"); var lb = x.label || (x.h + "p");
+        var on = lb === info.quality; d.textContent = (on ? "\u2713 " : "") + lb; if (on) d.className = "cur";
+        d.onclick = function () { if (!on) cmd("quality", x.h); }; m.appendChild(d); });
+    } else {
+      var d = document.createElement("div"); d.className = "dim"; d.textContent = "Original quality" + (info.quality ? " (" + info.quality + ")" : ""); m.appendChild(d);
+    }
+    var s = document.createElement("div"); s.className = "sep"; m.appendChild(s);
+    var o = document.createElement("div"); o.className = "vlc"; o.textContent = "\u25B6 Open in VLC"; o.onclick = openVlc; m.appendChild(o);
   }
   function buildSp() {
     var m = $("mSp"); m.innerHTML = "";
@@ -225,21 +248,15 @@
     setTimeout(function () { if (v.textTracks[0]) v.textTracks[0].mode = "showing"; }, 100);
     $("bCc").classList.add("on");
   }
+  function loadSub(s) { fetch(s.url).then(function (r) { return r.text(); }).then(applySub).catch(function () { osd("Subtitle load nahi hui"); }); }
   function buildCc() {
     var m = $("mCc"); m.innerHTML = "";
     var off = document.createElement("div"); off.textContent = "Off"; off.onclick = function () { clearSubsKeep(); }; m.appendChild(off);
-    subs.forEach(function (s) { var d = document.createElement("div"); d.textContent = s.name; d.onclick = function () {
-      fetch("/stream/" + encodeURIComponent(s.id) + "?n=" + encodeURIComponent(s.name)).then(function (r) { return r.text(); }).then(applySub); }; m.appendChild(d); });
+    subs.forEach(function (s) { var d = document.createElement("div"); d.textContent = s.name; d.onclick = function () { loadSub(s); }; m.appendChild(d); });
     var f = document.createElement("div"); f.textContent = "Load from PC..."; f.onclick = function () { $("subFile").click(); }; m.appendChild(f);
   }
   function clearSubsKeep() { if (trackEl) { trackEl.remove(); trackEl = null; } $("bCc").classList.remove("on"); }
   $("subFile").onchange = function () { var f = this.files[0]; if (!f) return; var r = new FileReader(); r.onload = function () { applySub(String(r.result)); }; r.readAsText(f); this.value = ""; };
-  function findSubs() {
-    var cb = "__subs" + Date.now(); var id = cur.id;
-    window[cb] = function (l) { delete window[cb]; if (id !== cur.id) return; subs = l || [];
-      if (subs.length) fetch("/stream/" + encodeURIComponent(subs[0].id) + "?n=" + encodeURIComponent(subs[0].name)).then(function (r) { return r.text(); }).then(function (t) { if (id === cur.id) applySub(t); }).catch(function () {}); };
-    Android.playerFindSubs(cur.id, cur.name, cb);
-  }
 
   // ---- UI auto-hide + keys ----
   function showUI(keep) { document.body.classList.remove("hidden-ui", "hide-cursor"); clearTimeout(uiT);
@@ -254,21 +271,19 @@
       case "ArrowUp": e.preventDefault(); setVol(v.volume + 0.05); break;
       case "ArrowDown": e.preventDefault(); setVol(v.volume - 0.05); break;
       case "m": case "M": v.muted = !v.muted; muteIcon(); break;
-      case "f": case "F": Android.playerFullscreen(); break;
+      case "f": case "F": case "F11": e.preventDefault(); fullscreen(); break;
       case "n": case "N": next(); break;
       case "p": case "P": prev(); break;
       case "]": setSpeed(1); break;
       case "[": setSpeed(-1); break;
       case "a": case "A": $("bAr").click(); break;
       case "c": case "C": $("bCc").click(); break;
+      case "q": case "Q": if (info.variants && info.variants.length > 1) cmd("quality"); else osd("Is video ki sirf ek quality hai"); break;
+      case "v": case "V": openVlc(); break;
       case "t": case "T": var n = audioList().length; if (n > 1) setAudio((curAudio() + 1) % n); break;
-      case "Escape": save(false); Android.playerClose(); break;
+      case "Escape": if (!document.fullscreenElement) closePlayer(); break;
     }
   });
-  window.addEventListener("beforeunload", function () { save(false); });
-  window.onBlockState = function (s) { if (s && s.blocked) { v.pause(); v.removeAttribute("src"); v.load(); } };
-
-  load(idx, true);
   showUI();
 })();
 </script>
