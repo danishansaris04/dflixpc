@@ -1033,6 +1033,7 @@ function startHeroCarousel() {
   showHeroCandidate(0);
   if (heroCandidates.length > 1) {
     heroRotateTimer = setInterval(function () {
+      if (document.documentElement.classList.contains("dflix-paused")) return;
       var nextIdx = (heroCandidateIndex + 1) % heroCandidates.length;
       showHeroCandidate(nextIdx);
     }, HERO_ROTATE_MS);
@@ -1053,6 +1054,7 @@ function pauseHeroCarousel() {
 function resumeHeroCarousel() {
   if (!heroRotateTimer && heroCandidates.length > 1 && viewMode === "home" && !document.hidden) {
     heroRotateTimer = setInterval(function () {
+      if (document.documentElement.classList.contains("dflix-paused")) return;
       var nextIdx = (heroCandidateIndex + 1) % heroCandidates.length;
       showHeroCandidate(nextIdx);
     }, HERO_ROTATE_MS);

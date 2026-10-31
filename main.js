@@ -45,6 +45,47 @@ function updateActive() {
   presence.setActive(!!(visible || (player && player.engine.isAlive())));
 }
 
+// ---------- player chalte waqt D-FLIX "freeze" (window open rehti hai, minimize nahi) ----------
+// Player khulte hi main window ka poora content paint/animate hona band (1000 cards, blur, hero, timers),
+// poster/backdrop requests ruk jaate hain (whenPlayerIdle). Sirf ek halka "paused" screen dikhta hai.
+// Player band hote hi sab pehle jaisa, scroll position bhi wahi.
+let mainSuspended = false;
+const PAUSE_CSS = [
+  '.dflix-paused *,.dflix-paused *::before,.dflix-paused *::after{animation:none!important;transition:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;will-change:auto!important}',
+  '.dflix-paused body>*{visibility:hidden!important}',
+  '.dflix-paused{background:#050508!important}',
+  '.dflix-paused::after{content:"\\25B6  Player chal raha hai \\2014  D-FLIX paused";position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#6b6b78;font:15px sans-serif;letter-spacing:.5px;background:#050508;z-index:2147483647}',
+].join(' ');
+let pauseCssKey = null;
+function suspendMain() {
+  if (mainSuspended || !win || win.isDestroyed()) return;
+  mainSuspended = true;
+  try {
+    win.webContents.setBackgroundThrottling(true);
+    win.webContents.insertCSS(PAUSE_CSS).then((k) => { pauseCssKey = k; if (!mainSuspended && win && !win.isDestroyed()) win.webContents.removeInsertedCSS(k).catch(() => {}); }).catch(() => {});
+    runJs("try{document.documentElement.classList.add('dflix-paused')}catch(e){}");
+  } catch (e) { console.error('suspendMain', e.message); }
+}
+function resumeMain() {
+  if (!mainSuspended) return;
+  mainSuspended = false;
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.webContents.setBackgroundThrottling(false);
+    runJs("try{document.documentElement.classList.remove('dflix-paused')}catch(e){}");
+    if (pauseCssKey) { win.webContents.removeInsertedCSS(pauseCssKey).catch(() => {}); pauseCssKey = null; }
+  } catch (e) { console.error('resumeMain', e.message); }
+}
+// Har player path (web / mpv / fallback / switch) ke liye ek hi jagah se state follow karte hain
+let lastBusy = false;
+setInterval(() => {
+  if (quitting) return;
+  const busy = playerBusy();
+  if (busy === lastBusy) return;
+  lastBusy = busy;
+  if (busy) suspendMain(); else resumeMain();
+}, 400);
+
 // ---------- window ----------
 function createWindow() {
   win = new BrowserWindow({
@@ -59,6 +100,42 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.on('closed', () => { win = null; });
   win.loadFile(path.join(__dirname, 'ui', 'index.html'));
+}
+
+// ---------- poster loading: player chalte waqt pause ----------
+// Poster fetch (network + encrypt/decrypt + disk) aur video streaming ek hi Node process me chalte hain.
+// Isliye jab tak player khula hai, naye poster requests wait karte hain; player band hote hi sab chal padte hain.
+const idleWaiters = [];
+let idleTimer = null;
+const playerBusy = () => !!(player && player.engine && player.engine.isAlive());
+function whenPlayerIdle() {
+  if (!playerBusy()) return Promise.resolve();
+  return new Promise((resolve) => {
+    idleWaiters.push(resolve);
+    if (idleTimer) return;
+    idleTimer = setInterval(() => {
+      if (playerBusy()) return;
+      clearInterval(idleTimer); idleTimer = null;
+      idleWaiters.splice(0).forEach((f, i) => setTimeout(f, i * 25)); // halka stagger, ek saath bheed na ho
+    }, 1000);
+  });
+}
+
+// ---------- poster queue: ek saath sirf 3 ----------
+// 1000 cards = 1000 requests ek saath hota tha. Ab max 3 chalte hain; scroll karne par jo card abhi dikh raha hai
+// wo pehle (naya request pehle - LIFO). Player khula ho to queue ruki rehti hai (upar whenPlayerIdle).
+const POSTER_MAX = 3;
+let posterActive = 0;
+const posterQ = [];
+function posterJob(fn) {
+  return new Promise((resolve) => { posterQ.push({ fn, resolve }); pumpPoster(); });
+}
+function pumpPoster() {
+  while (posterActive < POSTER_MAX && posterQ.length) {
+    const j = posterQ.pop(); posterActive++;
+    whenPlayerIdle().then(() => j.fn()).then((r) => j.resolve(r), (e) => { console.error('poster job', e && e.message); j.resolve(null); })
+      .then(() => { posterActive--; pumpPoster(); });
+  }
 }
 
 // ---------- player ----------
@@ -199,8 +276,8 @@ const asyncApi = {
   async searchFiles(kw, cbName) {
     try { const t = await tokens.getValidAccessToken(); cb(cbName, t ? await drive.searchFiles(t, kw) : { error: 'not_logged_in' }); } catch (e) { err(cbName, e); }
   },
-  async resolvePoster(raw, reqId) { const r = await tmdb.resolvePoster(raw); runJs('onPosterResolved(' + q(reqId) + ',' + q(r.dataUrl || r.url) + ');'); },
-  async resolveBackdrop(raw, reqId) { const r = await tmdb.resolveBackdrop(raw); runJs('onPosterResolved(' + q(reqId) + ',' + q(r.dataUrl || r.url) + ');'); },
+  async resolvePoster(raw, reqId) { const r = await posterJob(() => tmdb.resolvePoster(raw)); if (!r) return; runJs('onPosterResolved(' + q(reqId) + ',' + q(r.dataUrl || r.url) + ');'); },
+  async resolveBackdrop(raw, reqId) { const r = await posterJob(() => tmdb.resolveBackdrop(raw)); if (!r) return; runJs('onPosterResolved(' + q(reqId) + ',' + q(r.dataUrl || r.url) + ');'); },
   savePosterFile: (k, d) => { try { tmdb.savePoster(k, d); } catch (e) { console.error(e.message); } },
   async saveCustomPosterFile(k, url, reqId) { const ok = await tmdb.saveCustomPoster(k, url); runJs('onCustomPosterSaved(' + q(reqId) + ',' + ok + ');'); },
   deletePosterFile: (k) => tmdb.deletePoster(k),
